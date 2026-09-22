@@ -14,6 +14,10 @@ app.use(express.json({ limit: '50mb' }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
+const CF_API_KEY = process.env.CF_API_KEY;
+const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
+const CF_API_BASE = CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1` : null;
+
 // 🔥 REASONING DISPLAY TOGGLE - Shows/hides reasoning in output
 const SHOW_REASONING = false; // Set to true to show reasoning with <think> tags
 
@@ -58,6 +62,42 @@ app.get('/v1/models', (req, res) => {
 
 // Chat completions endpoint (main proxy)
 app.post('/v1/chat/completions', async (req, res) => {
+  // NEW: Route Cloudflare models separately, leave everything else untouched
+  if (req.body.model && req.body.model.startsWith('@cf/')) {
+    try {
+      const cfResponse = await axios.post(`${CF_API_BASE}/chat/completions`, {
+        model: req.body.model,
+        messages: req.body.messages,
+        temperature: req.body.temperature || 0.6,
+        max_tokens: req.body.max_tokens || 2048,
+        stream: req.body.stream || false
+      }, {
+        headers: {
+          'Authorization': `Bearer ${CF_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        responseType: req.body.stream ? 'stream' : 'json'
+      });
+
+      if (req.body.stream) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        cfResponse.data.pipe(res);
+      } else {
+        res.json(cfResponse.data);
+      }
+      return;
+    } catch (error) {
+      console.error('Cloudflare proxy error:', error.message);
+      return res.status(error.response?.status || 500).json({
+        error: {
+          message: error.message || 'Cloudflare request failed',
+          type: 'invalid_request_error',
+          code: error.response?.status || 500
+        }
+      });
+    }
+  }
+
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
     
