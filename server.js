@@ -69,7 +69,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         model: req.body.model,
         messages: req.body.messages,
         temperature: req.body.temperature || 0.6,
-        max_tokens: req.body.max_tokens || 15000,
+        max_tokens: req.body.max_tokens || 2048,
         stream: req.body.stream || false
       }, {
         headers: {
