@@ -14,6 +14,10 @@ app.use(express.json({ limit: '50mb' }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
+// Ollama Cloud API configuration
+const OLLAMA_API_BASE = 'https://ollama.com/v1';
+const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
+
 const CF_API_KEY = process.env.CF_API_KEY;
 const CF_ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
 const CF_API_BASE = CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1` : null;
@@ -62,6 +66,59 @@ app.get('/v1/models', (req, res) => {
 
 // Chat completions endpoint (main proxy)
 app.post('/v1/chat/completions', async (req, res) => {
+  // OLLAMA CLOUD ROUTING
+if (req.body.model && req.body.model.startsWith('ollama/')) {
+try {
+if (!OLLAMA_API_KEY) {
+return res.status(500).json({
+error: {
+message: 'Ollama API key is not configured on Render',
+type: 'configuration_error'
+}
+});
+}
+
+  const ollamaModel = req.body.model.replace('ollama/', '');
+
+  const ollamaResponse = await axios.post(
+    `${OLLAMA_API_BASE}/chat/completions`,
+    {
+      ...req.body,
+      model: ollamaModel
+    },
+    {
+      headers: {
+        'Authorization': `Bearer ${OLLAMA_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      responseType: req.body.stream ? 'stream' : 'json'
+    }
+  );
+
+  if (req.body.stream) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    ollamaResponse.data.pipe(res);
+  } else {
+    res.json(ollamaResponse.data);
+  }
+
+  return;
+
+} catch (error) {
+  console.error('Ollama proxy error:', error.response?.data || error.message);
+
+  return res.status(error.response?.status || 500).json({
+    error: {
+      message: error.response?.data?.error?.message || error.message || 'Ollama request failed',
+      type: 'ollama_error'
+    }
+  });
+}
+
+}
   // NEW: Route Cloudflare models separately, leave everything else untouched
   if (req.body.model && req.body.model.startsWith('@cf/')) {
     try {
